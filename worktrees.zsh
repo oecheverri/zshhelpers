@@ -1,4 +1,60 @@
 # --- Git Worktrees Manager ---
+#
+# Manage git worktrees from a single repository root. All worktrees are stored
+# under <repo>/.worktrees/ and the directory is automatically git-ignored.
+#
+# PUBLIC FUNCTIONS
+# ----------------
+#
+# worktrees [subcommand] [args...]
+#   Manage worktrees for the current repository.
+#
+#   Subcommands:
+#     list (default)                    List all worktrees, marking the current one with *.
+#     switch <name>                     Switch to a worktree, creating it from main if needed.
+#     switch <name> --from <branch>     Switch to a worktree, creating it from <branch> if needed.
+#     remove <name>                     Remove a worktree (prompts if branch is unmerged).
+#     root                              cd back to the repository root.
+#
+#   Examples:
+#     worktrees                         # list all worktrees
+#     worktrees list                    # same as above
+#     worktrees switch my-feature       # create & switch to 'my-feature' (from main)
+#     worktrees switch fix --from dev   # create & switch to 'fix' (from dev)
+#     worktrees remove my-feature       # remove worktree (safety-checked)
+#     worktrees root                    # cd back to the repo root
+#
+#   Errors:
+#     - Not inside a git repository
+#     - Cannot determine main branch (run 'git remote set-head origin --auto')
+
+# =============================================================================
+# PUBLIC API
+# =============================================================================
+
+worktrees() {
+  local cmd="${1:-list}"
+
+  case "$cmd" in
+    list)    _wt_list ;;
+    switch)  shift; _wt_switch "$@" ;;
+    remove)  _wt_remove "$2" ;;
+    root)    _wt_root ;;
+    *)
+      echo "Usage: worktrees [list|switch|remove|root]" >&2
+      echo "  list                           List worktrees (default)" >&2
+      echo "  switch <name>                  Switch to worktree, creating from main if needed" >&2
+      echo "  switch <name> --from <branch>  Switch to worktree, creating from <branch> if needed" >&2
+      echo "  remove <name>                  Remove a worktree (with merge safety check)" >&2
+      echo "  root                           cd back to the repository root" >&2
+      return 1
+      ;;
+  esac
+}
+
+# =============================================================================
+# INTERNAL — helpers, subcommands, and completion
+# =============================================================================
 
 _wt_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || {
@@ -30,26 +86,6 @@ _wt_ensure_setup() {
       fi
     fi
   fi
-}
-
-worktrees() {
-  local cmd="${1:-list}"
-
-  case "$cmd" in
-    list)    _wt_list ;;
-    switch)  shift; _wt_switch "$@" ;;
-    remove)  _wt_remove "$2" ;;
-    root)    _wt_root ;;
-    *)
-      echo "Usage: worktrees [list|switch|remove|root]" >&2
-      echo "  list                           List worktrees (default)" >&2
-      echo "  switch <name>                  Switch to worktree, creating from main if needed" >&2
-      echo "  switch <name> --from <branch>  Switch to worktree, creating from <branch> if needed" >&2
-      echo "  remove <name>                  Remove a worktree (with merge safety check)" >&2
-      echo "  root                           cd back to the repository root" >&2
-      return 1
-      ;;
-  esac
 }
 
 _wt_list() {

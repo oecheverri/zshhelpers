@@ -1,4 +1,32 @@
 # --- Git Helpers ---
+#
+# Safe wrappers around common git operations.
+#
+# PUBLIC FUNCTIONS
+# ----------------
+#
+# pushRemote [flags...]
+#   Push the current branch to origin with upstream tracking (-u).
+#   Refuses to push 'main' unless a force flag is given.
+#
+#   Flags:
+#     -f, --force, --force-with-lease, --force-if-includes
+#       Override the main-branch safety check (and pass the flag to git push).
+#
+#     Any other flags are forwarded directly to `git push`.
+#
+#   Examples:
+#     pushRemote                          # push current branch to origin
+#     pushRemote --force-with-lease       # force-push (also bypasses main guard)
+#     pushRemote --no-verify              # push, skipping pre-push hooks
+#
+#   Errors:
+#     - Not on a branch (detached HEAD)
+#     - On 'main' without a force flag
+
+# =============================================================================
+# PUBLIC API
+# =============================================================================
 
 function pushRemote() {
   local branch
