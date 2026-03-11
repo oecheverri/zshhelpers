@@ -21,11 +21,13 @@ _wt_ensure_setup() {
   if [[ ! -d "$root/.worktrees" ]]; then
     mkdir -p "$root/.worktrees"
 
-    local gitignore="$root/.gitignore"
-    if [[ ! -f "$gitignore" ]]; then
-      echo ".worktrees" > "$gitignore"
-    elif ! grep -qxF '.worktrees' "$gitignore"; then
-      echo ".worktrees" >> "$gitignore"
+    if ! git -C "$root" check-ignore -q .worktrees 2>/dev/null; then
+      local gitignore="$root/.gitignore"
+      if [[ ! -f "$gitignore" ]]; then
+        echo ".worktrees" > "$gitignore"
+      elif ! grep -qxF '.worktrees' "$gitignore"; then
+        echo ".worktrees" >> "$gitignore"
+      fi
     fi
   fi
 }
