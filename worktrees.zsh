@@ -19,8 +19,14 @@ _wt_main_branch() {
 _wt_ensure_setup() {
   local root=$1
   if [[ ! -d "$root/.worktrees" ]]; then
-    echo "Error: .worktrees directory not found. Run 'worktrees setup' first." >&2
-    return 1
+    mkdir -p "$root/.worktrees"
+
+    local gitignore="$root/.gitignore"
+    if [[ ! -f "$gitignore" ]]; then
+      echo ".worktrees" > "$gitignore"
+    elif ! grep -qxF '.worktrees' "$gitignore"; then
+      echo ".worktrees" >> "$gitignore"
+    fi
   fi
 }
 
@@ -29,17 +35,16 @@ worktrees() {
 
   case "$cmd" in
     list)    _wt_list ;;
-    switch)  _wt_switch "$2" ;;
+    switch)  shift; _wt_switch "$@" ;;
     remove)  _wt_remove "$2" ;;
-    setup)   _wt_setup ;;
-    createBasedOn) _wt_create_based_on "$2" "$3" ;;
+    root)    _wt_root ;;
     *)
-      echo "Usage: worktrees [list|switch|remove|setup|createBasedOn]" >&2
-      echo "  list                          List all worktrees (default)" >&2
-      echo "  switch <name>                 Switch to worktree, creating if needed" >&2
-      echo "  remove <name>                 Remove a worktree (with merge safety check)" >&2
-      echo "  setup                         Initialize .worktrees dir and .gitignore entry" >&2
-      echo "  createBasedOn <branch> <name> Create worktree based on a specific branch" >&2
+      echo "Usage: worktrees [list|switch|remove|root]" >&2
+      echo "  list                           List worktrees (default)" >&2
+      echo "  switch <name>                  Switch to worktree, creating from main if needed" >&2
+      echo "  switch <name> --from <branch>  Switch to worktree, creating from <branch> if needed" >&2
+      echo "  remove <name>                  Remove a worktree (with merge safety check)" >&2
+      echo "  root                           cd back to the repository root" >&2
       return 1
       ;;
   esac
@@ -48,46 +53,80 @@ worktrees() {
 _wt_list() {
   local root
   root=$(_wt_repo_root) || return 1
-  git -C "$root" worktree list
+
+  local wt_dir="$root/.worktrees"
+  if [[ ! -d "$wt_dir" ]]; then
+    echo "(no worktrees)"
+    return
+  fi
+
+  local current_wt=""
+  if [[ "$PWD" == "$wt_dir"/* ]]; then
+    current_wt="${PWD#$wt_dir/}"
+    current_wt="${current_wt%%/*}"
+  fi
+
+  local -a entries
+  entries=(${wt_dir}/*(N:t))
+
+  if (( ${#entries} == 0 )); then
+    echo "(no worktrees)"
+    return
+  fi
+
+  for name in "${entries[@]}"; do
+    if [[ "$name" == "$current_wt" ]]; then
+      echo "* $name"
+    else
+      echo "  $name"
+    fi
+  done
 }
 
-_wt_setup() {
+_wt_root() {
   local root
   root=$(_wt_repo_root) || return 1
-
-  mkdir -p "$root/.worktrees"
-  echo "Created $root/.worktrees"
-
-  local gitignore="$root/.gitignore"
-
-  if [[ ! -f "$gitignore" ]]; then
-    echo ".worktrees" > "$gitignore"
-    echo "Created .gitignore with .worktrees entry."
-  elif ! grep -qxF '.worktrees' "$gitignore"; then
-    echo ".worktrees" >> "$gitignore"
-    echo "Added .worktrees to .gitignore."
-  else
-    echo ".worktrees already in .gitignore."
-  fi
+  cd "$root"
+  echo "Switched to repository root: $root"
 }
 
 _wt_switch() {
-  local name="$1"
+  local name=""
+  local from_branch=""
+
+  while (( $# )); do
+    case "$1" in
+      --from)
+        shift
+        from_branch="$1"
+        ;;
+      *)
+        name="$1"
+        ;;
+    esac
+    shift
+  done
+
   if [[ -z "$name" ]]; then
-    echo "Usage: worktrees switch <name>" >&2
+    echo "Usage: worktrees switch <name> [--from <branch>]" >&2
     return 1
   fi
 
-  local root main_branch wt_path
+  local root wt_path
   root=$(_wt_repo_root)       || return 1
   _wt_ensure_setup "$root"    || return 1
 
   wt_path="$root/.worktrees/$name"
 
   if [[ ! -d "$wt_path" ]]; then
-    main_branch=$(_wt_main_branch) || return 1
-    echo "Creating worktree '$name' based on '$main_branch'..."
-    git -C "$root" worktree add -b "$name" "$wt_path" "$main_branch" || return 1
+    local base_branch
+    if [[ -n "$from_branch" ]]; then
+      base_branch="$from_branch"
+    else
+      base_branch=$(_wt_main_branch) || return 1
+    fi
+    echo "Creating worktree '$name' based on '$base_branch'..."
+    git -C "$root" worktree add -b "$name" "$wt_path" "$base_branch" || return 1
   fi
 
   cd "$wt_path"
@@ -113,7 +152,6 @@ _wt_remove() {
     return 1
   fi
 
-  # Check if the branch is merged into the local or remote main branch
   local merged=false
   if git -C "$root" branch --merged "$main_branch" | grep -qw "$name" 2>/dev/null ||
      git -C "$root" branch --merged "origin/$main_branch" | grep -qw "$name" 2>/dev/null; then
@@ -130,42 +168,14 @@ _wt_remove() {
     fi
   fi
 
-  # If we're currently inside the worktree being removed, step out
   if [[ "$PWD" == "$wt_path"* ]]; then
     cd "$root"
   fi
 
   git -C "$root" worktree remove --force "$wt_path" || return 1
-
-  # Clean up the branch if it still exists locally
   git -C "$root" branch -D "$name" 2>/dev/null
 
   echo "Removed worktree and branch '$name'."
-}
-
-_wt_create_based_on() {
-  local source_branch="$1"
-  local name="$2"
-
-  if [[ -z "$source_branch" || -z "$name" ]]; then
-    echo "Usage: worktrees createBasedOn <branch> <name>" >&2
-    return 1
-  fi
-
-  local root wt_path
-  root=$(_wt_repo_root)       || return 1
-  _wt_ensure_setup "$root"    || return 1
-
-  wt_path="$root/.worktrees/$name"
-
-  if [[ -d "$wt_path" ]]; then
-    echo "Error: worktree '$name' already exists at $wt_path" >&2
-    return 1
-  fi
-
-  echo "Creating worktree '$name' based on '$source_branch'..."
-  git -C "$root" worktree add -b "$name" "$wt_path" "$source_branch" || return 1
-  echo "Created worktree at $wt_path"
 }
 
 # --- Completion ---
@@ -189,11 +199,10 @@ _worktrees_branches() {
 _worktrees() {
   local -a subcommands
   subcommands=(
-    'list:List all worktrees (default)'
+    'list:List worktrees (default)'
     'switch:Switch to worktree, creating if needed'
     'remove:Remove a worktree (with merge safety check)'
-    'setup:Initialize .worktrees dir and .gitignore entry'
-    'createBasedOn:Create worktree based on a specific branch'
+    'root:cd back to the repository root'
   )
 
   if (( CURRENT == 2 )); then
@@ -205,18 +214,15 @@ _worktrees() {
     switch)
       if (( CURRENT == 3 )); then
         _worktrees_existing_names
+      elif (( CURRENT == 4 )); then
+        compadd -- '--from'
+      elif [[ "${words[4]}" == "--from" ]] && (( CURRENT == 5 )); then
+        _worktrees_branches
       fi
       ;;
     remove)
       if (( CURRENT == 3 )); then
         _worktrees_existing_names
-      fi
-      ;;
-    createBasedOn)
-      if (( CURRENT == 3 )); then
-        _worktrees_branches
-      elif (( CURRENT == 4 )); then
-        _message 'worktree name'
       fi
       ;;
   esac
